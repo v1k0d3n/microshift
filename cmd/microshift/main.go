@@ -42,5 +42,7 @@ func newCommand() *cobra.Command {
 	cmd.AddCommand(cmds.NewRestoreCommand())
 	cmd.AddCommand(cmds.NewHealthcheckCommand())
 	cmd.AddCommand(cmds.NewAddNodeCommand())
+	cmd.AddCommand(cmds.NewInitClusterCommand())
+	cmd.AddCommand(cmds.NewJoinClusterCommand())
 	return cmd
 }

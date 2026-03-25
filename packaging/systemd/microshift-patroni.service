@@ -1,0 +1,20 @@
+[Unit]
+Description=Patroni PostgreSQL HA Manager (MicroShift)
+After=network-online.target
+Wants=network-online.target
+Before=microshift.service
+
+[Service]
+Type=simple
+User=postgres
+Group=postgres
+ExecStart=/usr/local/bin/patroni /var/lib/microshift/patroni/patroni.yml
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+
+# Allow Patroni to manage PostgreSQL child processes
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

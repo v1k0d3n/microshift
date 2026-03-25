@@ -5,7 +5,7 @@ import (
 	"io/fs"
 )
 
-//go:embed components controllers core crd version release
+//go:embed components controllers core crd version release postgresql keepalived
 var content embed.FS
 
 func Asset(name string) ([]byte, error) {

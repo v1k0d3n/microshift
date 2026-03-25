@@ -91,8 +91,16 @@ func NewKubeAPIServer(cfg *config.Config) *KubeAPIServer {
 	return s
 }
 
-func (s *KubeAPIServer) Name() string           { return "kube-apiserver" }
-func (s *KubeAPIServer) Dependencies() []string { return []string{"etcd", "network-configuration"} }
+func (s *KubeAPIServer) Name() string { return "kube-apiserver" }
+func (s *KubeAPIServer) Dependencies() []string {
+	// The storage backend dependency name changes based on the configured
+	// backend: "etcd" for single-node, "kine" for 2-node HA.
+	storageBackend := "etcd"
+	if s.configuration.Storage.EffectiveBackend() == config.StorageBackendKine {
+		storageBackend = "kine"
+	}
+	return []string{storageBackend, "network-configuration"}
+}
 
 func (s *KubeAPIServer) configure(ctx context.Context, cfg *config.Config) error {
 	s.verbosity = cfg.GetVerbosity()
@@ -232,7 +240,7 @@ func (s *KubeAPIServer) configure(ctx context.Context, cfg *config.Config) error
 			"enable-admission-plugins":              {},
 			"send-retry-after-while-not-ready-once": {"true"},
 			"shutdown-delay-duration":               {"5s"},
-			"feature-gates":                         featureGateArgs,
+			"feature-gates": featureGateArgs,
 		},
 		GenericAPIServerConfig: configv1.GenericAPIServerConfig{
 			AdmissionConfig: configv1.AdmissionConfig{
@@ -268,6 +276,16 @@ func (s *KubeAPIServer) configure(ctx context.Context, cfg *config.Config) error
 			filepath.Join(config.DataDir, "/resources/kube-apiserver/secrets/service-account-key/service-account.pub"),
 		},
 		ServicesNodePortRange: cfg.Network.ServiceNodePortRange,
+	}
+
+	// In 2-node HA mode, configure the API server for multi-instance operation:
+	// - endpoint-reconciler-type=lease: each API server registers itself via Lease
+	//   objects in kube-system, enabling automatic discovery by kube-proxy
+	// - apiserver-count=2: informs the API server that 2 instances exist, which
+	//   affects rate limiting and storage version migration behavior
+	if cfg.TwoNode.Enabled {
+		overrides.APIServerArguments["endpoint-reconciler-type"] = kubecontrolplanev1.Arguments{"lease"}
+		overrides.APIServerArguments["apiserver-count"] = kubecontrolplanev1.Arguments{"2"}
 	}
 
 	overridesBytes, err := json.Marshal(overrides)
@@ -437,9 +455,12 @@ func discoverEtcdServers(ctx context.Context, kubeconfigPath string) ([]string, 
 		return nil, fmt.Errorf("failed to create etcd client TLS config: %v", err)
 	}
 
+	// Use 127.0.0.1 instead of "localhost" to avoid IPv6 resolution issues.
+	// On systems where localhost resolves to [::1] (e.g. Fedora 43), the
+	// connection fails because etcd/Kine only bind to IPv4 0.0.0.0:2379.
 	client, err := clientv3.New(clientv3.Config{
 		DialTimeout: 5 * time.Second,
-		Endpoints:   []string{"https://localhost:2379"},
+		Endpoints:   []string{"https://127.0.0.1:2379"},
 		TLS:         tlsConfig,
 		Context:     ctx,
 	})
@@ -448,7 +469,7 @@ func discoverEtcdServers(ctx context.Context, kubeconfigPath string) ([]string, 
 	}
 	defer func() { _ = client.Close() }()
 
-	st, err := client.Status(ctx, "localhost:2379")
+	st, err := client.Status(ctx, "127.0.0.1:2379")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get etcd status: %w", err)
 	}
@@ -456,7 +477,7 @@ func discoverEtcdServers(ctx context.Context, kubeconfigPath string) ([]string, 
 	// If I am not a learner it means I am a voting member, so connecting to my own etcd instance
 	// is fine because everything is synced.
 	if !st.IsLearner {
-		return []string{"https://localhost:2379"}, nil
+		return []string{"https://127.0.0.1:2379"}, nil
 	}
 
 	// If I am a learner I need to connect to a member, retrieve the list of voting

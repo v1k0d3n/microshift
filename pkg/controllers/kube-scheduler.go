@@ -65,7 +65,7 @@ func (s *KubeScheduler) configure(cfg *config.Config) {
 
 func (s *KubeScheduler) writeConfig(cfg *config.Config) error {
 	leaderElect := "false"
-	if cfg.MultiNode.Enabled {
+	if cfg.MultiNode.Enabled || cfg.TwoNode.Enabled {
 		leaderElect = "true"
 	}
 	data := []byte(`apiVersion: kubescheduler.config.k8s.io/v1

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 )
@@ -45,6 +46,19 @@ const (
 	CsiComponentNullAlias OptionalCsiComponent = ""
 )
 
+// StorageBackend selects the Kubernetes storage backend.
+// +kubebuilder:validation:Enum:="";etcd;kine
+type StorageBackend string
+
+const (
+	// StorageBackendDefault is the unset value; MicroShift defaults to etcd.
+	StorageBackendDefault StorageBackend = ""
+	// StorageBackendEtcd uses the embedded etcd server (single-node default).
+	StorageBackendEtcd StorageBackend = "etcd"
+	// StorageBackendKine uses Kine backed by PostgreSQL (required for 2-node HA).
+	StorageBackendKine StorageBackend = "kine"
+)
+
 // Storage represents a subfield of the MicroShift config data structure. Its purpose to provide a user
 // facing interface to control whether MicroShift should deploy LVMS on startup.
 type Storage struct {
@@ -66,6 +80,61 @@ type Storage struct {
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:example={"snapshot-controller"}
 	OptionalCSIComponents []OptionalCsiComponent `json:"optionalCsiComponents,omitempty"`
+
+	// Backend selects the Kubernetes storage backend. "etcd" (default) uses the
+	// embedded etcd server. "kine" uses Kine backed by PostgreSQL and is required
+	// for 2-node HA mode.
+	// +kubebuilder:validation:Optional
+	Backend StorageBackend `json:"backend,omitempty"`
+
+	// PostgreSQL holds connection settings for the PostgreSQL database used by
+	// Kine. Only applicable when backend is "kine".
+	// +kubebuilder:validation:Optional
+	PostgreSQL *PostgreSQLConfig `json:"postgresql,omitempty"`
+}
+
+// PostgreSQLConfig holds the connection parameters for a PostgreSQL database
+// used as the Kine storage backend in 2-node HA mode.
+type PostgreSQLConfig struct {
+	// Host is the PostgreSQL server hostname or IP address.
+	// Defaults to "localhost".
+	// +kubebuilder:validation:Optional
+	Host string `json:"host,omitempty"`
+
+	// Port is the PostgreSQL server port. Defaults to 5432.
+	// +kubebuilder:validation:Optional
+	Port int `json:"port,omitempty"`
+
+	// Database is the name of the database to connect to.
+	// Defaults to "microshift".
+	// +kubebuilder:validation:Optional
+	Database string `json:"database,omitempty"`
+
+	// User is the database user. Defaults to "microshift".
+	// +kubebuilder:validation:Optional
+	User string `json:"user,omitempty"`
+
+	// PasswordFile is the path to a file containing the database password.
+	// +kubebuilder:validation:Optional
+	PasswordFile string `json:"passwordFile,omitempty"`
+
+	// SSLMode controls TLS negotiation with the database. Common values are
+	// "disable", "require", "verify-ca", and "verify-full". Defaults to
+	// "verify-full".
+	// +kubebuilder:validation:Optional
+	SSLMode string `json:"sslMode,omitempty"`
+}
+
+// PostgreSQLDefaults returns a PostgreSQLConfig populated with default values.
+func PostgreSQLDefaults() *PostgreSQLConfig {
+	return &PostgreSQLConfig{
+		Host:         "127.0.0.1",
+		Port:         5432,
+		Database:     "microshift",
+		User:         "microshift",
+		PasswordFile: filepath.Join(DataDir, "secrets", "postgresql", "password"),
+		SSLMode:      "disable",
+	}
 }
 
 func (s Storage) driverIsValid() (isSupported bool) {
@@ -109,7 +178,31 @@ func (s Storage) IsValid() []error {
 	if comps := s.csiComponentsAreValid(); len(comps) > 0 {
 		errs.Insert(fmt.Errorf("invalid CSI components: %v", comps))
 	}
+	if !s.backendIsValid() {
+		errs.Insert(fmt.Errorf("invalid storage backend %q, allowed values are %q and %q",
+			s.Backend, StorageBackendEtcd, StorageBackendKine))
+	}
+	if s.Backend == StorageBackendKine && s.PostgreSQL != nil {
+		if s.PostgreSQL.Port < 1 || s.PostgreSQL.Port > 65535 {
+			errs.Insert(fmt.Errorf("invalid storage.postgresql.port %d", s.PostgreSQL.Port))
+		}
+	}
 	return errs.UnsortedList()
+}
+
+func (s Storage) backendIsValid() bool {
+	return sets.New[StorageBackend](
+		StorageBackendDefault, StorageBackendEtcd, StorageBackendKine,
+	).Has(s.Backend)
+}
+
+// EffectiveBackend returns the storage backend to use, resolving the default
+// empty value to "etcd".
+func (s Storage) EffectiveBackend() StorageBackend {
+	if s.Backend == StorageBackendDefault {
+		return StorageBackendEtcd
+	}
+	return s.Backend
 }
 
 // IsEnabled returns false only when .storage.driver: "none". An empty value is considered "enabled"

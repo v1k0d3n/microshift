@@ -106,7 +106,7 @@ export CGO_ENABLED ?= 1
 # Specify OCP build tools image tag when building rpm with podman
 RPM_BUILDER_IMAGE_TAG := rhel-9-golang-1.24-openshift-4.20
 
-all: generate-config microshift etcd
+all: generate-config microshift etcd kine
 
 microshift: build
 
@@ -131,6 +131,19 @@ etcd:
                    -X main.buildDate=$(BIN_TIMESTAMP) \
 					$(LD_FLAGS)\"" \
 		$(MAKE) -C etcd
+
+.PHONY: kine
+kine:
+	GO_LD_FLAGS="$(GC_FLAGS) -ldflags \"\
+                   -X main.majorFromGit=$(MAJOR) \
+                   -X main.minorFromGit=$(MINOR) \
+                   -X main.patchFromGit=$(PATCH) \
+                   -X main.versionFromGit=$(EMBEDDED_GIT_TAG) \
+                   -X main.commitFromGit=$(EMBEDDED_GIT_COMMIT) \
+                   -X main.gitTreeState=$(EMBEDDED_GIT_TREE_STATE) \
+                   -X main.buildDate=$(BIN_TIMESTAMP) \
+					$(LD_FLAGS)\"" \
+		$(MAKE) -C kine
 
 # Default verify target for developers
 .PHONY: verify
@@ -254,6 +267,19 @@ _build_local:
 		$(MAKE) -C etcd --no-print-directory build \
 			GO_BUILD_PACKAGES:=./cmd/microshift-etcd \
 			GO_BUILD_BINDIR:=../$(CROSS_BUILD_BINDIR)/$(GOOS)_$(GOARCH)
+	+@GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		GO_LD_FLAGS="$(GC_FLAGS) -ldflags \"\
+                   -X main.majorFromGit=$(MAJOR) \
+                   -X main.minorFromGit=$(MINOR) \
+                   -X main.versionFromGit=$(EMBEDDED_GIT_TAG) \
+                   -X main.commitFromGit=$(EMBEDDED_GIT_COMMIT) \
+                   -X main.gitTreeState=$(EMBEDDED_GIT_TREE_STATE) \
+                   -X main.buildDate=$(BIN_TIMESTAMP) \
+					$(LD_FLAGS)\"" \
+					GOEXPERIMENT=${GOEXPERIMENT} \
+		$(MAKE) -C kine --no-print-directory build \
+			GO_BUILD_PACKAGES:=./cmd/microshift-kine \
+			GO_BUILD_BINDIR:=../$(CROSS_BUILD_BINDIR)/$(GOOS)_$(GOARCH)
 
 cross-build-linux-amd64:
 	+$(MAKE) _build_local GOOS=linux GOARCH=amd64
@@ -329,6 +355,11 @@ vendor:
 vendor-etcd:
 	$(MAKE) -C etcd vendor
 .PHONY: vendor-etcd
+
+# Update the kine dependencies, including especially MicroShift itself.
+vendor-kine:
+	$(MAKE) -C kine vendor
+.PHONY: vendor-kine
 
 # There should be no modified files in the etcd/vendor directory after
 # running `make vendor-etcd`.

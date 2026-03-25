@@ -105,7 +105,7 @@ func configure(ctx context.Context, cfg *config.Config) (args []string, applyFn 
 		},
 	}
 
-	if cfg.MultiNode.Enabled {
+	if cfg.MultiNode.Enabled || cfg.TwoNode.Enabled {
 		overrides.ExtendedArguments["leader-elect"] = []string{"true"}
 	}
 

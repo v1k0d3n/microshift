@@ -167,18 +167,26 @@ func RunMicroshift(cfg *config.Config) error {
 
 	logConfig(cfg)
 
-	// TO-DO: When multi-node is ready, we need to add the controller host-name/mDNS hostname
-	//        or VIP to this list on start
-	//        see https://github.com/openshift/microshift/pull/471
-
-	if err := util.AddToNoProxyEnv(
+	noProxyEntries := []string{
 		cfg.Node.NodeIP,
 		cfg.Node.HostnameOverride,
 		cfg.Network.ClusterNetwork[0],
 		cfg.Network.ServiceNetwork[0],
 		".svc",
 		".cluster.local",
-		"."+cfg.DNS.BaseDomain); err != nil {
+		"." + cfg.DNS.BaseDomain,
+	}
+	// In 2-node HA mode, add the VIP and peer address to the no-proxy list
+	// so inter-node and VIP traffic bypasses any configured HTTP proxy.
+	if cfg.TwoNode.Enabled {
+		if cfg.TwoNode.VIP != "" {
+			noProxyEntries = append(noProxyEntries, cfg.TwoNode.VIP)
+		}
+		if cfg.TwoNode.Peer.Address != "" {
+			noProxyEntries = append(noProxyEntries, cfg.TwoNode.Peer.Address)
+		}
+	}
+	if err := util.AddToNoProxyEnv(noProxyEntries...); err != nil {
 		klog.Fatal(err)
 	}
 
@@ -211,9 +219,24 @@ func RunMicroshift(cfg *config.Config) error {
 	runCtx, runCancel := context.WithCancel(context.Background())
 	m := servicemanager.NewServiceManager(startRec)
 	util.Must(m.AddService(node.NewNetworkConfiguration(cfg)))
-	util.Must(m.AddService(controllers.NewEtcd(cfg)))
+	// Select storage backend: etcd (default/single-node) or kine (2-node HA).
+	// When using kine, PostgreSQL must already be running (managed externally
+	// via Patroni/systemd, following the K3s model where the database is the
+	// user's responsibility).
+	switch cfg.Storage.EffectiveBackend() {
+	case config.StorageBackendKine:
+		klog.Info("Using Kine (PostgreSQL) storage backend for 2-node HA mode")
+		util.Must(m.AddService(controllers.NewKine(cfg)))
+	default:
+		util.Must(m.AddService(controllers.NewEtcd(cfg)))
+	}
 	util.Must(m.AddService(sysconfwatch.NewSysConfWatchController(cfg)))
 	util.Must(m.AddService(controllers.NewKubeAPIServer(cfg)))
+	// In 2-node HA mode, start keepalived to manage the floating VIP.
+	// Depends on kube-apiserver being ready (health check tracks it).
+	if cfg.TwoNode.Enabled {
+		util.Must(m.AddService(controllers.NewVIP(cfg)))
+	}
 	util.Must(m.AddService(controllers.NewKubeScheduler(cfg)))
 	util.Must(m.AddService(controllers.NewKubeControllerManager(runCtx, cfg)))
 	util.Must(m.AddService(controllers.NewOpenShiftCRDManager(cfg)))

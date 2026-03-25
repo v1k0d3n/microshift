@@ -85,6 +85,12 @@ func certSetup(cfg *config.Config) (*certchains.CertificateChains, error) {
 	if cfg.ApiServer.AdvertiseAddress != cfg.Node.NodeIP {
 		externalCertNames = append(externalCertNames, cfg.Node.NodeIP)
 	}
+	// In 2-node HA mode, include the VIP in the API server serving
+	// certificate SANs so that clients connecting via the VIP see a
+	// valid certificate regardless of which node they reach.
+	if cfg.TwoNode.Enabled && cfg.TwoNode.VIP != "" {
+		externalCertNames = append(externalCertNames, cfg.TwoNode.VIP)
+	}
 
 	certsDir := cryptomaterial.CertsDirectory(config.DataDir)
 
@@ -324,7 +330,7 @@ func certSetup(cfg *config.Config) (*certchains.CertificateChains, error) {
 					Validity: cryptomaterial.LongLivedCertificateValidity,
 				},
 				UserInfo:  &user.DefaultInfo{Name: "system:etcd-peer:etcd-client", Groups: []string{"system:etcd-peers"}},
-				Hostnames: []string{"localhost", cfg.Node.HostnameOverride, cfg.Node.NodeIP},
+				Hostnames: []string{"localhost", "127.0.0.1", cfg.Node.HostnameOverride, cfg.Node.NodeIP},
 			},
 			&certchains.PeerCertificateSigningRequestInfo{
 				CSRMeta: certchains.CSRMeta{
@@ -332,7 +338,7 @@ func certSetup(cfg *config.Config) (*certchains.CertificateChains, error) {
 					Validity: cryptomaterial.LongLivedCertificateValidity,
 				},
 				UserInfo:  &user.DefaultInfo{Name: "system:etcd-server:etcd-client", Groups: []string{"system:etcd-servers"}},
-				Hostnames: []string{"localhost", cfg.Node.HostnameOverride, cfg.Node.NodeIP},
+				Hostnames: []string{"localhost", "127.0.0.1", cfg.Node.HostnameOverride, cfg.Node.NodeIP},
 			},
 		),
 	).WithCABundle(

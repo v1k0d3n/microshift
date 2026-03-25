@@ -62,6 +62,12 @@ type Config struct {
 
 	GenericDevicePlugin GenericDevicePlugin `json:"genericDevicePlugin"`
 
+	// TwoNode holds configuration for 2-node HA mode. When enabled,
+	// MicroShift uses Kine + PostgreSQL instead of etcd and runs the
+	// control plane on both nodes with leader-elected components.
+	// +kubebuilder:validation:Optional
+	TwoNode TwoNodeConfig `json:"twoNode,omitempty"`
+
 	// Internal-only fields
 	userSettings *Config `json:"-"` // the values read from the config file
 
@@ -180,6 +186,9 @@ func (c *Config) fillDefaults() error {
 		},
 	}
 	c.MultiNode.Enabled = false
+	c.TwoNode = TwoNodeConfig{
+		Enabled: false,
+	}
 	c.Kubelet = nil
 	c.GenericDevicePlugin = genericDevicePluginDefaults()
 	c.Telemetry = telemetryDefaults()
@@ -310,6 +319,32 @@ func (c *Config) incorporateUserSettings(u *Config) {
 	}
 	if len(u.Storage.OptionalCSIComponents) > 0 {
 		c.Storage.OptionalCSIComponents = u.Storage.OptionalCSIComponents
+	}
+	if u.Storage.Backend != "" {
+		c.Storage.Backend = u.Storage.Backend
+	}
+	if u.Storage.PostgreSQL != nil {
+		c.Storage.PostgreSQL = u.Storage.PostgreSQL
+	}
+
+	// TwoNode settings
+	if u.TwoNode.Enabled {
+		c.TwoNode.Enabled = true
+	}
+	if u.TwoNode.Role != "" {
+		c.TwoNode.Role = u.TwoNode.Role
+	}
+	if u.TwoNode.VIP != "" {
+		c.TwoNode.VIP = u.TwoNode.VIP
+	}
+	if u.TwoNode.VIPInterface != "" {
+		c.TwoNode.VIPInterface = u.TwoNode.VIPInterface
+	}
+	if u.TwoNode.Peer.Address != "" {
+		c.TwoNode.Peer.Address = u.TwoNode.Peer.Address
+	}
+	if u.TwoNode.Peer.Hostname != "" {
+		c.TwoNode.Peer.Hostname = u.TwoNode.Peer.Hostname
 	}
 	if u.Kubelet != nil {
 		c.Kubelet = u.Kubelet
@@ -509,6 +544,17 @@ func (c *Config) updateComputedValues() error {
 		c.ApiServer.AdvertiseAddresses = append(c.ApiServer.AdvertiseAddresses, ip)
 	}
 
+	// When 2-node HA is enabled, ensure the storage backend is set to
+	// kine and that PostgreSQL defaults are populated if not provided.
+	if c.TwoNode.Enabled {
+		if c.Storage.Backend == StorageBackendDefault || c.Storage.Backend == StorageBackendEtcd {
+			c.Storage.Backend = StorageBackendKine
+		}
+		if c.Storage.PostgreSQL == nil {
+			c.Storage.PostgreSQL = PostgreSQLDefaults()
+		}
+	}
+
 	c.ApiServer.TLS.UpdateValues()
 
 	c.computeLoggingSetting()
@@ -668,6 +714,15 @@ func (c *Config) validate() error {
 	if err := c.DNS.validate(); err != nil {
 		return fmt.Errorf("error validating DNS: %v", err)
 	}
+
+	if err := c.TwoNode.validate(); err != nil {
+		return fmt.Errorf("error validating twoNode: %v", err)
+	}
+	// When twoNode is enabled, the storage backend must be kine.
+	if c.TwoNode.Enabled && c.Storage.EffectiveBackend() != StorageBackendKine {
+		return fmt.Errorf("twoNode.enabled requires storage.backend to be %q", StorageBackendKine)
+	}
+
 	return nil
 }
 
