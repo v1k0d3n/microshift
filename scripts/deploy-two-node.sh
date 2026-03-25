@@ -222,6 +222,25 @@ for NODE in "${PRIMARY_IP}" "${SECONDARY_IP}"; do
         "${NODE}" "/usr/bin/configure-ovs-microshift.sh"
     copy_to "${PACKAGING_DIR}/tuned/microshift-cleanup-kubelet.service" \
         "${NODE}" "/etc/systemd/system/microshift-cleanup-kubelet.service" 644
+    # Install CRI-O drop-in for pull secret authentication
+    copy_to "${PACKAGING_DIR}/crio.conf.d/10-microshift_amd64.conf" \
+        "${NODE}" "/etc/crio/crio.conf.d/10-microshift_amd64.conf" 644
+    # Install systemd override for 2-node failover watchdog. The watchdog
+    # accumulates failure counts across MicroShift restarts (one per restart)
+    # to detect when the PG primary is down. The default systemd rate limit
+    # (5 restarts / 10s) is too low — increase to allow the watchdog to
+    # reach its promotion threshold before systemd gives up.
+    run_on "${NODE}" '
+        mkdir -p /etc/systemd/system/microshift.service.d
+        cat > /etc/systemd/system/microshift.service.d/restart-limit.conf <<SDCFG
+[Unit]
+StartLimitBurst=10
+StartLimitIntervalSec=30
+
+[Service]
+RestartSec=1
+SDCFG
+    '
     run_on "${NODE}" 'systemctl daemon-reload'
 done
 
@@ -452,6 +471,9 @@ postgresql:
   parameters:
     unix_socket_directories: /var/run/postgresql
 
+watchdog:
+  mode: off
+
 tags:
   nofailover: false
   noloadbalance: false
@@ -558,6 +580,9 @@ postgresql:
       password: \${REPL_PW}
   parameters:
     unix_socket_directories: /var/run/postgresql
+
+watchdog:
+  mode: off
 
 tags:
   nofailover: false

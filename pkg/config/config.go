@@ -187,7 +187,8 @@ func (c *Config) fillDefaults() error {
 	}
 	c.MultiNode.Enabled = false
 	c.TwoNode = TwoNodeConfig{
-		Enabled: false,
+		Enabled:  false,
+		Failover: FailoverDefaults(),
 	}
 	c.Kubelet = nil
 	c.GenericDevicePlugin = genericDevicePluginDefaults()
@@ -345,6 +346,15 @@ func (c *Config) incorporateUserSettings(u *Config) {
 	}
 	if u.TwoNode.Peer.Hostname != "" {
 		c.TwoNode.Peer.Hostname = u.TwoNode.Peer.Hostname
+	}
+	if u.TwoNode.Failover.Enabled != nil {
+		c.TwoNode.Failover.Enabled = u.TwoNode.Failover.Enabled
+	}
+	if u.TwoNode.Failover.FailureThreshold > 0 {
+		c.TwoNode.Failover.FailureThreshold = u.TwoNode.Failover.FailureThreshold
+	}
+	if u.TwoNode.Failover.CheckInterval != nil {
+		c.TwoNode.Failover.CheckInterval = u.TwoNode.Failover.CheckInterval
 	}
 	if u.Kubelet != nil {
 		c.Kubelet = u.Kubelet

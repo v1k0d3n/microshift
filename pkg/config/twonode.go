@@ -3,6 +3,9 @@ package config
 import (
 	"fmt"
 	"net"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // TwoNodeRole defines the role of a node in a 2-node HA cluster.
@@ -52,6 +55,31 @@ type TwoNodeConfig struct {
 	// 2-node cluster.
 	// +kubebuilder:validation:Optional
 	Peer TwoNodePeer `json:"peer,omitempty"`
+
+	// Failover controls automatic PostgreSQL failover behavior when the
+	// peer node becomes unreachable. When enabled, a watchdog monitors
+	// the peer's Patroni health and triggers promotion if the local node
+	// is a PG replica and the peer is confirmed down.
+	// +kubebuilder:validation:Optional
+	Failover FailoverConfig `json:"failover,omitempty"`
+}
+
+// FailoverConfig controls the automatic failover watchdog that promotes the
+// local PostgreSQL replica when the peer node is unreachable.
+type FailoverConfig struct {
+	// Enabled activates the failover watchdog. Defaults to true when
+	// twoNode.enabled is true.
+	// +kubebuilder:validation:Optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// FailureThreshold is the number of consecutive health check failures
+	// before triggering failover. Default: 6 (with 5s interval = 30s dampening).
+	// +kubebuilder:validation:Optional
+	FailureThreshold int `json:"failureThreshold,omitempty"`
+
+	// CheckInterval is the time between peer health checks. Default: 5s.
+	// +kubebuilder:validation:Optional
+	CheckInterval *metav1.Duration `json:"checkInterval,omitempty"`
 }
 
 // TwoNodePeer describes the other node in a 2-node HA cluster.
@@ -64,6 +92,52 @@ type TwoNodePeer struct {
 	// resolved from the address during cluster initialization.
 	// +kubebuilder:validation:Optional
 	Hostname string `json:"hostname,omitempty"`
+}
+
+const (
+	// DefaultFailoverFailureThreshold is the number of consecutive health
+	// check failures (one per MicroShift restart) before triggering a
+	// failover. Set to 5 to stay within systemd's default StartLimitBurst
+	// of 5 restarts per 10 seconds.
+	DefaultFailoverFailureThreshold = 5
+
+	// DefaultFailoverCheckInterval is the time between peer health checks.
+	DefaultFailoverCheckInterval = 5 * time.Second
+)
+
+// FailoverDefaults returns a FailoverConfig with default values.
+func FailoverDefaults() FailoverConfig {
+	enabled := true
+	return FailoverConfig{
+		Enabled:          &enabled,
+		FailureThreshold: DefaultFailoverFailureThreshold,
+		CheckInterval:    &metav1.Duration{Duration: DefaultFailoverCheckInterval},
+	}
+}
+
+// IsEnabled returns whether the failover watchdog is enabled. Defaults to
+// true when the pointer is nil (i.e., user didn't explicitly set it).
+func (f *FailoverConfig) IsEnabled() bool {
+	if f.Enabled == nil {
+		return true
+	}
+	return *f.Enabled
+}
+
+// EffectiveCheckInterval returns the check interval with the default applied.
+func (f *FailoverConfig) EffectiveCheckInterval() time.Duration {
+	if f.CheckInterval == nil || f.CheckInterval.Duration == 0 {
+		return DefaultFailoverCheckInterval
+	}
+	return f.CheckInterval.Duration
+}
+
+// EffectiveFailureThreshold returns the failure threshold with the default applied.
+func (f *FailoverConfig) EffectiveFailureThreshold() int {
+	if f.FailureThreshold <= 0 {
+		return DefaultFailoverFailureThreshold
+	}
+	return f.FailureThreshold
 }
 
 // validate checks TwoNodeConfig for consistency. It is called as part of
@@ -89,6 +163,13 @@ func (t *TwoNodeConfig) validate() error {
 
 	if t.Role != TwoNodeRoleUnset && t.Role != TwoNodeRolePrimary && t.Role != TwoNodeRoleSecondary {
 		return fmt.Errorf("twoNode.role must be %q or %q, got %q", TwoNodeRolePrimary, TwoNodeRoleSecondary, t.Role)
+	}
+
+	if t.Failover.FailureThreshold < 0 {
+		return fmt.Errorf("twoNode.failover.failureThreshold must be >= 0, got %d", t.Failover.FailureThreshold)
+	}
+	if t.Failover.CheckInterval != nil && t.Failover.CheckInterval.Duration < time.Second {
+		return fmt.Errorf("twoNode.failover.checkInterval must be >= 1s, got %v", t.Failover.CheckInterval.Duration)
 	}
 
 	return nil

@@ -215,6 +215,15 @@ func RunMicroshift(cfg *config.Config) error {
 		klog.Fatalf("failed to create the necessary kubeconfigs for internal components: %v", err)
 	}
 
+	// In 2-node HA mode with failover enabled, check if the peer is down
+	// and the local node needs to be promoted to PG primary. This must run
+	// BEFORE Kine starts, because Kine will fail immediately if it can't
+	// reach the PG primary. By promoting first, Kine connects to the
+	// now-local primary on startup.
+	if cfg.TwoNode.Enabled && cfg.TwoNode.Failover.IsEnabled() {
+		controllers.RunFailoverPreCheck(cfg)
+	}
+
 	// Establish the context we will use to control execution
 	runCtx, runCancel := context.WithCancel(context.Background())
 	m := servicemanager.NewServiceManager(startRec)
