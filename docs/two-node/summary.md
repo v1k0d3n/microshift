@@ -266,12 +266,14 @@ All pods           | Running             | Running
 | 8. Failover Validation | COMPLETE | 6 tests run; discovered and fixed Patroni watchdog reboot issue |
 | 9. Raft Quorum Improvement | **COMPLETE** | Failover watchdog with `pg_ctl promote`; persistent failure count across restarts; Patroni watchdog disabled |
 | 10. Polish & Documentation | **IN PROGRESS** | Docs updated; live failover testing pending |
+| 11. NVIDIA DGX OS (ARM64) Port | **PLANNING** | AppArmor profiles, DGX OS deploy script, CRI-O + GPU integration |
 
 ### Plan Documents
 - `10-runtime-integration.md` — Phase 7: 21 runtime issues discovered and fixed
 - `11-k3s-lessons-architecture-pivot.md` — Architecture pivot: Patroni as external systemd service
 - `12-failover-validation.md` — Phase 8: 6 failover tests with failure mode analysis
 - `13-raft-quorum-improvement.md` — Phase 9: 5 options evaluated; Option C (pg_ctl promote) implemented
+- `14-dgx-os-arm64-port.md` — Phase 11: DGX OS platform port with AppArmor, deployment, GPU validation
 
 ### Phase 9: Key Implementation Details
 
